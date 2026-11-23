@@ -201,3 +201,30 @@ def test_non_integer_result_limit_raises_type_error():
 
     with pytest.raises(TypeError, match="max_results must be an integer"):
         search_source_code(incident, max_results="5")
+
+
+
+def test_source_evidence_includes_function_metadata():
+    incident = {
+        "failure_type": "database",
+        "message": "Unable to establish database connection",
+        "endpoint": "/simulate-failure",
+    }
+
+    results = search_source_code(incident)
+
+    assert results
+
+    matching_result = next(
+        result
+        for result in results
+        if result["file"].replace("\\", "/") == "app/api/routes.py"
+        and result["function"] is not None
+        and result["function"]["function_name"] == "simulate_failure"
+    )
+
+    function_info = matching_result["function"]
+
+    assert function_info["start_line"] <= matching_result["line_number"]
+    assert matching_result["line_number"] <= function_info["end_line"]
+    assert function_info["is_async"] is False

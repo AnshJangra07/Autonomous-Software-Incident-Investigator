@@ -2,6 +2,7 @@
 from pathlib import Path
 import re
 
+from app.services.ast_code_analyzer import find_containing_function
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_DIRECTORY = PROJECT_ROOT / "app"
@@ -106,8 +107,15 @@ def search_source_code(
             if score < MIN_RELEVANCE_SCORE:
                 continue
 
+            relative_file = str(source_file.relative_to(PROJECT_ROOT))
+
+            function_info = find_containing_function(
+                str(source_file),
+                line_number,
+            )
+
             results.append({
-                "file": str(source_file.relative_to(PROJECT_ROOT)),
+                "file": relative_file,
                 "line_number": line_number,
                 "matching_keywords": primary_matches + endpoint_matches,
                 "relevance_score": score,
@@ -117,6 +125,7 @@ def search_source_code(
                 "context": "\n".join(
                     lines[max(0, line_number - 3):line_number + 2]
                 ),
+                "function": function_info,
             })
 
     # Highest relevance first.
