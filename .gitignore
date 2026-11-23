@@ -1,0 +1,30 @@
+
+# Virtual environments
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Environment variables and secrets
+.env
+.env.*
+
+# Keep the example environment file
+!.env.example
+
+# Application logs
+logs/
+*.log
+
+# DeepEval
+.deepeval/
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
