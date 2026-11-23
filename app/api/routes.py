@@ -1,12 +1,34 @@
-from app.services.log_collector import read_error_events
-from app.services.incident_analyzer import analyze_incidents
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
+
+from app.services.log_collector import read_error_events
+from app.services.incident_analyzer import analyze_incidents
+from app.services.investigation_pipeline import investigate_incident
 
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
+
+class InvestigationRequest(BaseModel):
+    failure_type: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+    )
+
+    message: str = Field(
+        ...,
+        min_length=1,
+        max_length=1000,
+    )
+
+    endpoint: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+    )
 
 
 @router.get("/")
@@ -112,3 +134,23 @@ def get_incident_summary():
         "total_incident_types": len(summaries),
         "incident_summaries": summaries
     }
+
+
+@router.post("/investigations/run")
+def run_investigation(request: InvestigationRequest):
+
+    logger.info(
+        "Incident investigation started",
+        extra={"endpoint": "/investigations/run"}
+    )
+
+    incident = request.model_dump()
+
+    report = investigate_incident(incident)
+
+    logger.info(
+        "Incident investigation completed",
+        extra={"endpoint": "/investigations/run"}
+    )
+
+    return report
