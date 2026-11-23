@@ -8,6 +8,7 @@ from git.exc import GitCommandError, InvalidGitRepositoryError
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 MAX_COMMITS = 10
+MAX_ALLOWED_COMMITS = 50
 
 
 def get_file_commit_history(
@@ -28,6 +29,11 @@ def get_file_commit_history(
 
     if max_commits < 1:
         raise ValueError("max_commits must be greater than zero")
+
+    if max_commits > MAX_ALLOWED_COMMITS:
+        raise ValueError(
+            f"max_commits must not exceed {MAX_ALLOWED_COMMITS}"
+        )
 
     # Resolve and validate the requested path.
     requested_path = Path(file_path)

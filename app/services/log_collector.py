@@ -8,7 +8,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 LOG_FILE = PROJECT_ROOT / "logs" / "app.log"
-
+MAX_ERROR_EVENTS = 100
 
 
 def read_error_events(limit: int = 20):
@@ -17,6 +17,9 @@ def read_error_events(limit: int = 20):
 
     if limit < 0:
         raise ValueError("limit must not be negative")
+
+    if limit > MAX_ERROR_EVENTS:
+        raise ValueError(f"limit must not exceed {MAX_ERROR_EVENTS}")
 
     if limit == 0:
         return []

@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.schemas import InvestigationReport
 from app.services.log_collector import read_error_events
 from app.services.incident_analyzer import analyze_incidents
 from app.services.investigation_pipeline import investigate_incident
@@ -136,7 +137,10 @@ def get_incident_summary():
     }
 
 
-@router.post("/investigations/run")
+@router.post(
+    "/investigations/run",
+    response_model=InvestigationReport,
+)
 def run_investigation(request: InvestigationRequest):
 
     logger.info(

@@ -1,4 +1,6 @@
 
+import os
+from collections.abc import Iterator
 from pathlib import Path
 import re
 
@@ -7,6 +9,7 @@ from app.services.ast_code_analyzer import find_containing_function
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_DIRECTORY = PROJECT_ROOT / "app"
 MAX_RESULTS = 10
+MAX_ALLOWED_RESULTS = 50
 MIN_RELEVANCE_SCORE = 3
 
 STOP_WORDS = {
@@ -27,6 +30,61 @@ def extract_keywords(text: str) -> set[str]:
         for word in words
         if word not in STOP_WORDS
     }
+
+
+def _resolve_source_file(
+    source_file: Path,
+    resolved_source_directory: Path,
+) -> Path | None:
+    """Return a readable regular file contained by the resolved source root."""
+
+    try:
+        if source_file.is_symlink():
+            return None
+
+        resolved_source_file = source_file.resolve(strict=True)
+        resolved_source_file.relative_to(resolved_source_directory)
+
+        if not resolved_source_file.is_file():
+            return None
+
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+    return resolved_source_file
+
+
+def _iter_python_files(source_directory: Path) -> Iterator[Path]:
+    """Walk Python files without descending into symlinked directories."""
+
+    def ignore_walk_error(_: OSError) -> None:
+        return
+
+    for current_directory, directory_names, file_names in os.walk(
+        source_directory,
+        topdown=True,
+        onerror=ignore_walk_error,
+        followlinks=False,
+    ):
+        current_path = Path(current_directory)
+        safe_directory_names = []
+
+        for directory_name in directory_names:
+            directory_path = current_path / directory_name
+            try:
+                if directory_path.is_symlink():
+                    continue
+            except (OSError, RuntimeError):
+                continue
+
+            safe_directory_names.append(directory_name)
+
+        directory_names[:] = safe_directory_names
+
+        for file_name in file_names:
+            source_file = current_path / file_name
+            if source_file.match("*.py"):
+                yield source_file
 
 
 def search_source_code(
@@ -51,6 +109,11 @@ def search_source_code(
     if max_results < 1:
         raise ValueError("max_results must be greater than zero")
 
+    if max_results > MAX_ALLOWED_RESULTS:
+        raise ValueError(
+            f"max_results must not exceed {MAX_ALLOWED_RESULTS}"
+        )
+
     failure_type = str(incident.get("failure_type", "")).strip()
     message = str(incident.get("message", "")).strip()
     endpoint = str(incident.get("endpoint", "")).strip()
@@ -64,15 +127,26 @@ def search_source_code(
     if not primary_keywords and not endpoint_keywords:
         return []
 
-    if not SOURCE_DIRECTORY.exists():
+    try:
+        resolved_source_directory = SOURCE_DIRECTORY.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return []
+
+    if not resolved_source_directory.is_dir():
         return []
 
     results = []
 
-    for source_file in SOURCE_DIRECTORY.rglob("*.py"):
+    for source_file in _iter_python_files(SOURCE_DIRECTORY):
+        resolved_source_file = _resolve_source_file(
+            source_file,
+            resolved_source_directory,
+        )
+        if resolved_source_file is None:
+            continue
 
         try:
-            lines = source_file.read_text(
+            lines = resolved_source_file.read_text(
                 encoding="utf-8"
             ).splitlines()
 
@@ -110,7 +184,7 @@ def search_source_code(
             relative_file = str(source_file.relative_to(PROJECT_ROOT))
 
             function_info = find_containing_function(
-                str(source_file),
+                str(resolved_source_file),
                 line_number,
             )
 

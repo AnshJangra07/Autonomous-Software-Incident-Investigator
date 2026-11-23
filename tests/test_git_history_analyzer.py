@@ -29,6 +29,47 @@ def test_commit_history_respects_limit():
     assert len(history) <= 1
 
 
+@pytest.mark.parametrize(
+    ("requested_limit", "expected_limit"),
+    [(None, 10), (50, 50)],
+)
+def test_commit_history_default_and_maximum_limits(
+    monkeypatch,
+    requested_limit,
+    expected_limit,
+):
+    class FakeRepository:
+        bare = False
+
+        def iter_commits(self, **kwargs):
+            assert kwargs["max_count"] == expected_limit
+            return []
+
+    monkeypatch.setattr(
+        git_history_analyzer.git,
+        "Repo",
+        lambda *args, **kwargs: FakeRepository(),
+    )
+
+    if requested_limit is None:
+        history = get_file_commit_history("app/api/routes.py")
+    else:
+        history = get_file_commit_history(
+            "app/api/routes.py",
+            max_commits=requested_limit,
+        )
+
+    assert history == []
+
+
+def test_commit_limit_above_maximum_is_rejected():
+    with pytest.raises(
+        ValueError,
+        match="max_commits must not exceed 50",
+    ):
+        get_file_commit_history("app/api/routes.py", max_commits=51)
+
+
 def test_empty_file_path_is_rejected():
     with pytest.raises(ValueError):
         get_file_commit_history("")
@@ -117,4 +158,12 @@ def test_non_integer_commit_limit_is_rejected():
         get_file_commit_history(
             "app/api/routes.py",
             max_commits=1.5,
+        )
+
+
+def test_boolean_commit_limit_is_rejected():
+    with pytest.raises(TypeError):
+        get_file_commit_history(
+            "app/api/routes.py",
+            max_commits=True,
         )
