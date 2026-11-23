@@ -17,11 +17,18 @@ def extract_functions(file_path: str) -> list[dict]:
 
     try:
         source_code = path.read_text(encoding="utf-8")
-        syntax_tree = ast.parse(source_code)
-
+        return extract_functions_from_source(source_code)
     except (OSError, UnicodeDecodeError, SyntaxError):
         return []
 
+
+def extract_functions_from_source(source_code: str) -> list[dict]:
+    """Extract function and method definitions from Python source text.
+
+    Syntax errors are raised to allow callers to distinguish invalid source
+    from valid source that contains no functions.
+    """
+    syntax_tree = ast.parse(source_code)
     functions = []
 
     for node in ast.walk(syntax_tree):

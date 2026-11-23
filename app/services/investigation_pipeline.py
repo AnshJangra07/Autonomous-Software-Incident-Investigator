@@ -1,9 +1,179 @@
 from datetime import datetime, timezone
+from typing import Literal
+
+from git.exc import BadObject, GitError, InvalidGitRepositoryError, NoSuchPathError
+
 from app.services.source_code_analyzer import (
     search_source_code,
     extract_keywords,
 )
+from app.services.git_diff_analyzer import get_commit_diff
+from app.services.diff_change_analyzer import extract_changed_lines
 from app.services.git_history_analyzer import get_file_commit_history
+
+
+def _empty_change_evidence(
+    file_path: str,
+    commit_hash: str,
+    status: Literal["no_diff", "unavailable", "invalid_diff"],
+    error_reason: str | None = None,
+) -> dict:
+    """Build change evidence when no usable changed lines are available."""
+    evidence = {
+        "file_path": file_path,
+        "commit_hash": commit_hash,
+        "added_lines": [],
+        "deleted_lines": [],
+        "overlaps_suspicious_source_evidence": False,
+        "overlaps_suspicious_function": False,
+        "matching_function_names": [],
+        "status": status,
+        "note": (
+            "Line overlap is supporting evidence only and does not prove "
+            "causality."
+        ),
+    }
+    if error_reason is not None:
+        evidence["error_reason"] = error_reason
+    return evidence
+
+
+def _analyze_commit_changes(
+    file_path: str,
+    commit_hash: str,
+    source_evidence: list[dict],
+) -> dict:
+    """Correlate a commit's changed lines with suspicious source locations."""
+    try:
+        diff_result = get_commit_diff(commit_hash, file_path)
+    except (
+        BadObject,
+        GitError,
+        InvalidGitRepositoryError,
+        NoSuchPathError,
+    ):
+        return _empty_change_evidence(
+            file_path,
+            commit_hash,
+            "unavailable",
+            "Git diff could not be retrieved.",
+        )
+
+    if not isinstance(diff_result, dict):
+        return _empty_change_evidence(
+            file_path,
+            commit_hash,
+            "unavailable",
+            "Git diff result was missing or unusable.",
+        )
+
+    if diff_result.get("diff_found") is False:
+        return _empty_change_evidence(file_path, commit_hash, "no_diff")
+
+    if (
+        "diff_found" in diff_result
+        and not isinstance(diff_result["diff_found"], bool)
+    ):
+        return _empty_change_evidence(
+            file_path,
+            commit_hash,
+            "unavailable",
+            "Git diff result had an invalid status.",
+        )
+
+    if "patch" not in diff_result:
+        return _empty_change_evidence(
+            file_path,
+            commit_hash,
+            "unavailable",
+            "Git diff result did not include patch data.",
+        )
+
+    patch = diff_result["patch"]
+    if not isinstance(patch, str):
+        return _empty_change_evidence(
+            file_path,
+            commit_hash,
+            "invalid_diff",
+            "Git patch data was not text.",
+        )
+
+    if not patch:
+        return _empty_change_evidence(file_path, commit_hash, "no_diff")
+
+    try:
+        changes = extract_changed_lines(patch)
+    except (TypeError, ValueError):
+        return _empty_change_evidence(
+            file_path,
+            commit_hash,
+            "invalid_diff",
+            "Git patch could not be parsed.",
+        )
+
+    added_line_numbers = {
+        line["line_number"]
+        for line in changes["added_lines"]
+    }
+
+    file_evidence = [
+        evidence
+        for evidence in source_evidence
+        if evidence.get("file") == file_path
+    ]
+
+    suspicious_line_numbers = {
+        evidence.get("line_number")
+        for evidence in file_evidence
+    }
+    overlaps_suspicious_source = bool(
+        added_line_numbers.intersection(suspicious_line_numbers)
+    )
+
+    matching_function_names = set()
+    overlaps_suspicious_function = False
+
+    for evidence in file_evidence:
+        function = evidence.get("function")
+        if not isinstance(function, dict):
+            continue
+
+        start_line = function.get("start_line")
+        end_line = function.get("end_line")
+        if not isinstance(start_line, int) or not isinstance(end_line, int):
+            continue
+
+        overlapping_lines = {
+            line_number
+            for line_number in added_line_numbers
+            if start_line <= line_number <= end_line
+        }
+        if not overlapping_lines:
+            continue
+
+        overlaps_suspicious_function = True
+        function_name = function.get("function_name")
+        if isinstance(function_name, str) and function_name:
+            matching_function_names.add(function_name)
+
+    return {
+        "file_path": file_path,
+        "commit_hash": commit_hash,
+        "added_lines": changes["added_lines"],
+        "deleted_lines": changes["deleted_lines"],
+        "overlaps_suspicious_source_evidence": overlaps_suspicious_source,
+        "overlaps_suspicious_function": overlaps_suspicious_function,
+        "matching_function_names": sorted(matching_function_names),
+        "status": (
+            "available"
+            if changes["added_lines"] or changes["deleted_lines"]
+            else "no_diff"
+        ),
+        "note": (
+            "Line overlap is supporting evidence only and does not prove "
+            "causality."
+        ),
+    }
 
 
 def investigate_incident(
@@ -116,6 +286,11 @@ def investigate_incident(
                 ),
                 "recency_score": recency_score,
                 "relevance_score": round(final_score, 4),
+                "change_evidence": _analyze_commit_changes(
+                    file_path,
+                    commit["commit_hash"],
+                    source_evidence,
+                ),
             })
 
     # Highest-ranked commits first.
